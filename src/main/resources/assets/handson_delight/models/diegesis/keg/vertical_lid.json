@@ -1,0 +1,78 @@
+{
+  "textures": {
+    "particle": "brewinandchewin:block/vertical_keg_top",
+    "vertical_keg_top": "brewinandchewin:block/vertical_keg_top",
+    "inside": "handson_delight:block/keg/standing"
+  },
+  "elements": [
+    {
+      "name": "lid",
+      "from": [
+        2,
+        15,
+        2
+      ],
+      "to": [
+        14,
+        16,
+        14
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            0,
+            12,
+            3,
+            12.25
+          ],
+          "texture": "#inside"
+        },
+        "east": {
+          "uv": [
+            8,
+            12,
+            11,
+            12.25
+          ],
+          "texture": "#inside"
+        },
+        "south": {
+          "uv": [
+            4,
+            12,
+            7,
+            12.25
+          ],
+          "texture": "#inside"
+        },
+        "west": {
+          "uv": [
+            12,
+            12,
+            15,
+            12.25
+          ],
+          "texture": "#inside"
+        },
+        "up": {
+          "uv": [
+            2,
+            2,
+            14,
+            14
+          ],
+          "texture": "#vertical_keg_top"
+        },
+        "down": {
+          "uv": [
+            4,
+            8,
+            7,
+            11
+          ],
+          "texture": "#inside"
+        }
+      }
+    }
+  ]
+}

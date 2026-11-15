@@ -1,0 +1,78 @@
+{
+  "textures": {
+    "particle": "brewinandchewin:block/keg_top",
+    "keg_top": "brewinandchewin:block/keg_top",
+    "inside": "handson_delight:block/keg/lying"
+  },
+  "elements": [
+    {
+      "name": "lid",
+      "from": [
+        2,
+        15,
+        1
+      ],
+      "to": [
+        14,
+        16,
+        15
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            0,
+            8,
+            3,
+            8.25
+          ],
+          "texture": "#inside"
+        },
+        "east": {
+          "uv": [
+            8,
+            8,
+            11.5,
+            8.25
+          ],
+          "texture": "#inside"
+        },
+        "south": {
+          "uv": [
+            4,
+            8,
+            7,
+            8.25
+          ],
+          "texture": "#inside"
+        },
+        "west": {
+          "uv": [
+            12,
+            8,
+            15.5,
+            8.25
+          ],
+          "texture": "#inside"
+        },
+        "up": {
+          "uv": [
+            2,
+            1,
+            14,
+            15
+          ],
+          "texture": "#keg_top"
+        },
+        "down": {
+          "uv": [
+            4,
+            4,
+            7,
+            7.5
+          ],
+          "texture": "#inside"
+        }
+      }
+    }
+  ]
+}

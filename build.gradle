@@ -1,0 +1,97 @@
+plugins {
+    id 'net.fabricmc.fabric-loom' version '1.17-SNAPSHOT'
+}
+
+version = project.mod_version
+group = project.maven_group
+
+base { archivesName = project.archives_base_name }
+
+repositories {
+    mavenCentral()
+    maven { url = 'https://maven.fabricmc.net/' }
+    flatDir { dirs 'libs' }
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+
+    implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+
+    // Farmer's Delight Refabricated 26.1-3.6.30
+    implementation files("libs/fdrf.jar")
+    // Diegesis (ported in this workspace)
+    implementation files("libs/diegesis.jar")
+}
+
+loom {
+    runs {
+        // The client straight into the test world: `gradle runClientQuick` вЂ” an ordinary client, nothing of its own.
+        clientQuick {
+            client()
+            name = "Client (New World)"
+            programArg '--quickPlaySingleplayer'
+            programArg 'New World'
+        }
+        // The same, looked at while porting: it saves screenshots every ten seconds and drives itself to the nearest station.
+        // Only for a session of one's own вЂ” it closes screens and turns the player, so never while someone is playing.
+        clientProbe {
+            client()
+            name = "Client (probe)"
+            programArg '--quickPlaySingleplayer'
+            programArg 'New World'
+            vmArg '-Dhds.shot=C:/Users/user/AppData/Local/Temp/opencode/shots'
+            vmArg '-Ddiegesis.autotest'
+            vmArg '-Ddiegesis.diag=true'
+            vmArg '-Ddiegesis.smooth.off'
+            vmArg '-Dhandson.diag=true'
+            vmArg "-Ddiegesis.autotest.station=${project.findProperty('station') ?: ''}"
+        }
+        // An addon's stove without a hand on the keyboard: the client sets the block down beside the player and opens it
+        // (`gradle runClientAddons -Pplace=mynethersdelight:nether_stove`), and says in the log what of the addon the board cuts,
+        // the board puts together and the pot cooks.
+        clientAddons {
+            client()
+            name = "Client (addons)"
+            programArg '--quickPlaySingleplayer'
+            programArg 'New World'
+            vmArg '-Dhds.shot=C:/Users/user/AppData/Local/Temp/opencode/shots'
+            vmArg '-Ddiegesis.autotest'
+            vmArg '-Ddiegesis.diag=true'
+            vmArg '-Dhandson.addontest=true'
+            vmArg "-Ddiegesis.autotest.station=${project.findProperty('station') ?: ''}"
+            vmArg "-Ddiegesis.autotest.place=${project.findProperty('place') ?: ''}"
+            vmArg "-Ddiegesis.autotest.click=${project.findProperty('click') ?: ''}"
+        }
+    }
+}
+
+processResources {
+    def replaceProperties = [
+            mod_id              : mod_id,
+            mod_name            : mod_name,
+            mod_license         : mod_license,
+            mod_authors         : mod_authors,
+            mod_description     : mod_description,
+            mod_url             : mod_url,
+            mod_version         : mod_version,
+            minecraft_version   : minecraft_version,
+            fabric_loader_version: fabric_loader_version,
+            fabric_api_version  : fabric_api_version
+    ]
+    inputs.properties replaceProperties
+    filesMatching('fabric.mod.json') { expand replaceProperties }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    it.options.encoding = 'UTF-8'
+    it.options.release = 25
+    it.options.compilerArgs += ['-Xmaxerrs', '500']
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_25
+    targetCompatibility = JavaVersion.VERSION_25
+}
+

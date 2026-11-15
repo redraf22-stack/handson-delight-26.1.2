@@ -1,0 +1,285 @@
+{
+  "textures": {
+    "particle": "brewinandchewin:block/vertical_keg_side",
+    "vertical_keg_front": "brewinandchewin:block/vertical_keg_front",
+    "vertical_keg_side": "brewinandchewin:block/vertical_keg_side",
+    "vertical_keg_top": "brewinandchewin:block/vertical_keg_top",
+    "vertical_keg_bottom": "brewinandchewin:block/vertical_keg_bottom",
+    "inside": "handson_delight:block/keg/standing"
+  },
+  "elements": [
+    {
+      "name": "stave_north",
+      "from": [
+        1,
+        0,
+        1
+      ],
+      "to": [
+        15,
+        16,
+        2
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            1,
+            0,
+            15,
+            16
+          ],
+          "texture": "#vertical_keg_front"
+        },
+        "east": {
+          "uv": [
+            14,
+            0,
+            15,
+            16
+          ],
+          "texture": "#vertical_keg_side"
+        },
+        "south": {
+          "uv": [
+            0,
+            0,
+            3.5,
+            4
+          ],
+          "texture": "#inside"
+        },
+        "west": {
+          "uv": [
+            1,
+            0,
+            2,
+            16
+          ],
+          "texture": "#vertical_keg_side"
+        },
+        "up": {
+          "uv": [
+            1,
+            1,
+            15,
+            2
+          ],
+          "texture": "#vertical_keg_top"
+        },
+        "down": {
+          "uv": [
+            1,
+            14,
+            15,
+            15
+          ],
+          "texture": "#vertical_keg_bottom"
+        }
+      }
+    },
+    {
+      "name": "stave_south",
+      "from": [
+        1,
+        0,
+        14
+      ],
+      "to": [
+        15,
+        16,
+        15
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            4,
+            0,
+            7.5,
+            4
+          ],
+          "texture": "#inside"
+        },
+        "east": {
+          "uv": [
+            1,
+            0,
+            2,
+            16
+          ],
+          "texture": "#vertical_keg_side"
+        },
+        "south": {
+          "uv": [
+            1,
+            0,
+            15,
+            16
+          ],
+          "texture": "#vertical_keg_side"
+        },
+        "west": {
+          "uv": [
+            14,
+            0,
+            15,
+            16
+          ],
+          "texture": "#vertical_keg_side"
+        },
+        "up": {
+          "uv": [
+            1,
+            14,
+            15,
+            15
+          ],
+          "texture": "#vertical_keg_top"
+        },
+        "down": {
+          "uv": [
+            1,
+            1,
+            15,
+            2
+          ],
+          "texture": "#vertical_keg_bottom"
+        }
+      }
+    },
+    {
+      "name": "stave_west",
+      "from": [
+        1,
+        0,
+        2
+      ],
+      "to": [
+        2,
+        16,
+        14
+      ],
+      "faces": {
+        "east": {
+          "uv": [
+            8,
+            0,
+            11,
+            4
+          ],
+          "texture": "#inside"
+        },
+        "west": {
+          "uv": [
+            2,
+            0,
+            14,
+            16
+          ],
+          "texture": "#vertical_keg_side"
+        },
+        "up": {
+          "uv": [
+            1,
+            2,
+            2,
+            14
+          ],
+          "texture": "#vertical_keg_top"
+        },
+        "down": {
+          "uv": [
+            1,
+            2,
+            2,
+            14
+          ],
+          "texture": "#vertical_keg_bottom"
+        }
+      }
+    },
+    {
+      "name": "stave_east",
+      "from": [
+        14,
+        0,
+        2
+      ],
+      "to": [
+        15,
+        16,
+        14
+      ],
+      "faces": {
+        "east": {
+          "uv": [
+            2,
+            0,
+            14,
+            16
+          ],
+          "texture": "#vertical_keg_side"
+        },
+        "west": {
+          "uv": [
+            12,
+            0,
+            15,
+            4
+          ],
+          "texture": "#inside"
+        },
+        "up": {
+          "uv": [
+            14,
+            2,
+            15,
+            14
+          ],
+          "texture": "#vertical_keg_top"
+        },
+        "down": {
+          "uv": [
+            14,
+            2,
+            15,
+            14
+          ],
+          "texture": "#vertical_keg_bottom"
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "from": [
+        2,
+        0,
+        2
+      ],
+      "to": [
+        14,
+        1,
+        14
+      ],
+      "faces": {
+        "up": {
+          "uv": [
+            0,
+            8,
+            3,
+            11
+          ],
+          "texture": "#inside"
+        },
+        "down": {
+          "uv": [
+            2,
+            2,
+            14,
+            14
+          ],
+          "texture": "#vertical_keg_bottom"
+        }
+      }
+    }
+  ]
+}
