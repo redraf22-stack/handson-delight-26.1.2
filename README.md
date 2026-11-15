@@ -20,7 +20,8 @@
 1. **Minecraft 26.1.2**, **Fabric Loader 0.19.5+**, **Java 25**.
 2. В папку `mods` положить:
    - `handson_delight-1.4.1+26.1.2.jar`
-   - `diegesis-1.0.0-beta.9+26.1.2.jar` (библиотека сцен, без неё мод не запустится)
+   - `diegesis-1.0.0-beta.9+26.1.2.jar` (библиотека сцен, без неё мод не запустится) —
+     [релиз Diegesis для 26.1.2](https://github.com/redraf22-stack/diegesis-26.1.2/releases)
 3. Отдельно нужны:
    - **Fabric API 0.155.2+26.1.2**
    - **Farmer's Delight Refabricated 26.1-3.6.30** — мод ничего своего не регистрирует, блоки и предметы остаются его.
