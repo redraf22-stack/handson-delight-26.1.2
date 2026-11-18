@@ -43,7 +43,24 @@ public final class HandsOnDelightClient {
         DiegesisClient.registerLiquid(HandsOnDelight.id("broth"), LiquidLook.of(0xE0B0A070).thick(0.6F));
         registerParticles();
         AddonCheck.install();
+        warmBoardBook();
     }
+
+    /** The board's cuts are read on a worker thread as the world joins: the first open of a board then has nothing to build. */
+    private static void warmBoardBook() {
+        net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents.END_CLIENT_TICK.register(minecraft -> {
+            net.minecraft.world.level.Level level = minecraft.level;
+            if (level == null || level == warmedLevel) {
+                return;
+            }
+            warmedLevel = level;
+            Thread worker = new Thread(() -> BoardBook.warm(level), "handson-board-cuts");
+            worker.setDaemon(true);
+            worker.start();
+        });
+    }
+
+    private static net.minecraft.world.level.Level warmedLevel;
 
     private static List<Identifier> frames(String base, int count) {
         List<Identifier> frames = new ArrayList<>();

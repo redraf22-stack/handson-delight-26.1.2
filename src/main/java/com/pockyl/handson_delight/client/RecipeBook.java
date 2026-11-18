@@ -22,6 +22,9 @@ import net.minecraft.client.resources.sounds.SimpleSoundInstance;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.game.ServerboundClientCommandPacket;
 import net.minecraft.resources.Identifier;
+import net.minecraft.core.Direction;
+import net.minecraft.core.Holder;
+import net.minecraft.world.item.Item;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.stats.Stats;
 import net.minecraft.util.FormattedCharSequence;
@@ -49,6 +52,8 @@ import com.pockyl.handson_delight.station.PotLogic;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -118,6 +123,13 @@ final class RecipeBook implements NodePainter {
     private static final int WELL_READY = 0x70E0A83C;
     private static final int WELL_PICKED = 0xFF8A5A2B;
     private static final int FADED = 0x55FFFFFF;
+    /** A block's icon, faded: dimmed, not see-through (see {@code Sheet.item}). Dim enough to read as "not here yet" beside a
+     * flat icon, which is drawn at half alpha. */
+    private static final int DIM_BLOCK = 0xFF737373;
+    /** Laid over an icon the player does not have: the paper's colour, so the icon fades into the page without being see-through. */
+    private static final int WASH = 0x50E7DBBE;
+    /** A block's icon, faded: see-through like a flat one, but fuller — its own back faces show through it the more it fades. */
+    private static final int FADED_BLOCK = 0x62FFFFFF;
     private static final int RULE = 0x405A3C18;
     /** Stars on a page: open, the part of the next one already earned, still shut. */
     private static final int STAR_OPEN = 0xFFD08A1E;
@@ -154,7 +166,32 @@ final class RecipeBook implements NodePainter {
     private static final int RIBBON_HEIGHT = 13;
     /** The shade in the fold of the pages. */
     private static final int FOLD = 0x285A3C18;
-    private static final int FOLD_WIDTH = 5;
+    /**
+     * The marks on a page — wells, rule, the fold's shade, shut stars — are tints of the paper, and drawn as such they are
+     * see-through: while a sheet turns, what lies behind it showed through every well and read as a hole in the page. Mixed with
+     * the paper's own colour they are solid and look the same.
+     */
+    private static final int PAPER_BASE = 0xFFF2EAD2;
+    private static final int WELL_SOLID = onPaper(WELL);
+    private static final int WELL_READY_SOLID = onPaper(WELL_READY);
+    private static final int RULE_SOLID = onPaper(RULE);
+    private static final int FOLD_SOLID = onPaper(FOLD);
+    private static final int STAR_SHUT_SOLID = onPaper(STAR_SHUT);
+    private static final int STAR_EARNING_SOLID = onPaper(STAR_EARNING);
+
+    /** {@code argb} laid over the paper's colour and made solid. */
+    private static int onPaper(int argb) {
+        float cover = ((argb >>> 24) & 0xFF) / 255.0F;
+        int red = (argb >> 16) & 0xFF;
+        int green = (argb >> 8) & 0xFF;
+        int blue = argb & 0xFF;
+        int paperRed = (PAPER_BASE >> 16) & 0xFF;
+        int paperGreen = (PAPER_BASE >> 8) & 0xFF;
+        int paperBlue = PAPER_BASE & 0xFF;
+        return 0xFF000000 | Math.round(paperRed + (red - paperRed) * cover) << 16
+                | Math.round(paperGreen + (green - paperGreen) * cover) << 8 | Math.round(paperBlue + (blue - paperBlue) * cover);
+    }
+    private static final int FOLD_WIDTH = 3;
     /** The right page's middle, clear of the fold's shade on its left. */
     private static final float RIGHT_MIDDLE = (UNITS_WIDE + FOLD_WIDTH) / 2.0F;
     /** Small things at the foot of a page: how big, how far apart; the dish at the head of its page. */
@@ -178,6 +215,7 @@ final class RecipeBook implements NodePainter {
     private int flipWay = 1;
     private int page;
     private Entry picked;
+    /** The version of the source's pages the list was read at: read again when it moves (the recipes came in after the opening). */
     private Entry hovered;
     /** The tabs over the list (none for a book of one kind), the kind shown (null: all), the tab under the cursor. */
     private List<Tab> tabs = List.of();
@@ -239,6 +277,14 @@ final class RecipeBook implements NodePainter {
     /** What a station's book lists: its recipes, and what lies in the station already, which counts as the player's. */
     interface Source {
         List<Page> pages(StationView view);
+
+        /**
+         * Goes up when the pages change on their own, read in the background (a board's dishes come from the server): the book
+         * reads them again by itself, instead of waiting for the next click.
+         */
+        default int version(StationView view) {
+            return 0;
+        }
 
         List<ItemStack> inStation(StationView view);
 
@@ -418,6 +464,15 @@ final class RecipeBook implements NodePainter {
     }
 
     private void read(StationView view) {
+        read(view, true);
+    }
+
+    /**
+     * Reads the list. {@code order}: sort it — on opening, on another tab, on a click; the stock looked at again every second keeps
+     * the order the book was opened with, so the recipes never move under the player's eyes.
+     */
+    private void read(StationView view, boolean order) {
+        long started = System.nanoTime();
         List<Tab> offered = source.tabs(view);
         tabs = offered.size() > 2 ? offered : List.of();
         if (!tabRemembered) {
@@ -434,15 +489,17 @@ final class RecipeBook implements NodePainter {
                 found.add(entry(page, pool));
             }
         }
-        if (cursorX >= 0.0F && !entries.isEmpty()) {
-            // Under the cursor the list keeps its order: a dish never moves away from where the player points.
+        if (!order || (cursorX >= 0.0F && !entries.isEmpty())) {
+            // The order it already has: a dish never moves away from where the player points.
             List<Object> before = entries.stream().map(entry -> entry.page().key()).toList();
             found.sort(Comparator.comparingInt(entry -> {
                 int at = before.indexOf(entry.page().key());
                 return at < 0 ? Integer.MAX_VALUE : at;
             }));
         } else {
-            found.sort(Comparator.comparingInt(Entry::missing).thenComparing(entry -> entry.dish().getHoverName().getString()));
+            // By name, and by nothing else — as vanilla's recipe book lists its pages. The stock says what can be made with the
+            // gold well, not where the recipe stands: a list that re-orders itself as the inventory changes is a list nobody can use.
+            found.sort(Comparator.comparing(entry -> nameOf(entry.dish())));
         }
         if (picked != null) {
             Object kept = picked.page().key();
@@ -450,6 +507,10 @@ final class RecipeBook implements NodePainter {
         }
         entries = found;
         page = Math.min(page, pages() - 1);
+        long spent = (System.nanoTime() - started) / 1_000_000L;
+        if (spent >= 10L) {
+            com.pockyl.handson_delight.HandsOnDelight.LOGGER.info("book: {} entries listed in {} ms", entries.size(), spent);
+        }
     }
 
     /** What the player has to cook with: the inventory, the stack in the hand (a knife taken to cut), and what lies in the station. */
@@ -472,16 +533,43 @@ final class RecipeBook implements NodePainter {
         return ingredient.items().map(ItemStack::new).toArray(ItemStack[]::new);
     }
 
-    private static Entry entry(Page page, List<ItemStack> pool) {
-        int[] left = pool.stream().mapToInt(ItemStack::getCount).toArray();
+    /** The name a dish is listed by, translated once: sorting 217 of them took a third of the book's opening. */
+    private static final Map<Item, String> NAMES = new HashMap<>();
+
+    /**
+     * How the list keeps its kinds together: in the order of the tabs, so the dishes put together on the board stand in one run and
+     * the cuts in another, instead of the two alternating by the first letter of their names.
+     */
+    private int kindRank(String kind) {
+        for (int i = 0; i < tabs.size(); i++) {
+            if (Objects.equals(tabs.get(i).kind(), kind)) {
+                return i;
+            }
+        }
+        return tabs.size();
+    }
+
+    private static String nameOf(ItemStack stack) {
+        return NAMES.computeIfAbsent(stack.getItem(), item -> new ItemStack(item).getHoverName().getString());
+    }
+
+    private static Entry entry(Page page, List<ItemStack> pool) {        Map<Item, Integer> have = new HashMap<>();
+        for (ItemStack stack : pool) {
+            if (!stack.isEmpty()) {
+                have.merge(stack.getItem(), stack.getCount(), Integer::sum);
+            }
+        }
         List<Ingredient> ingredients = page.ingredients();
         boolean[] found = new boolean[ingredients.size()];
         int missing = 0;
         for (int i = 0; i < found.length; i++) {
-            for (int stack = 0; stack < left.length && !found[i]; stack++) {
-                if (left[stack] > 0 && ingredients.get(i).test(pool.get(stack))) {
-                    left[stack]--;
+            // What the ingredient takes, by item: a tag of thirty foods tested against every slot was most of the book's cost.
+            for (Holder<Item> choice : ingredients.get(i).items().toList()) {
+                Integer count = have.get(choice.value());
+                if (count != null && count > 0) {
+                    have.put(choice.value(), count - 1);
                     found[i] = true;
+                    break;
                 }
             }
             missing += found[i] ? 0 : 1;
@@ -557,10 +645,7 @@ final class RecipeBook implements NodePainter {
         }
         node.rotateTo(Mth.sin(time * 0.9F) * 1.2F, Mth.cos(time * 0.7F) * 1.5F, 0.0F, 0.0F);
         refresh -= dt;
-        if (refresh <= 0.0F && wanted) {
-            refresh = REFRESH_TIME;
-            read(view);
-        }
+        // Nothing is re-read while the book is open: the list was made when it opened, and it does not move under the player's eyes.
         follow(view, node);
     }
 
@@ -696,6 +781,7 @@ final class RecipeBook implements NodePainter {
 
     @Override
     public void paint(PoseStack poseStack, MultiBufferSource buffers, int light) {
+        com.pockyl.diegesis.impl.client.render.SceneSubmit.layer(0);
         shade = LightCoordsUtil.pack(Math.max(LightCoordsUtil.block(light), LIT), Math.max(LightCoordsUtil.sky(light), LIT));
         if (model == null) {
             model = RecipeBookModel.bake();
@@ -729,38 +815,45 @@ final class RecipeBook implements NodePainter {
      */
     private void spread(PoseStack poseStack, MultiBufferSource buffers, float tilt, float height) {
         if (flip >= 1.0F) {
-            side(poseStack, buffers, true, tilt, height, page, true);
-            side(poseStack, buffers, false, -tilt, height, page, false);
+            side(poseStack, buffers, true, tilt, height, page, true, false);
+            side(poseStack, buffers, false, -tilt, height, page, false, false);
             return;
         }
         float over = flip * flip * (3.0F - 2.0F * flip);
         // Forward the old list stays on the left until the sheet covers it with the new one; back the old list itself lifts off.
         boolean forward = flipWay > 0;
-        side(poseStack, buffers, true, tilt, height, forward ? page - 1 : page, true);
-        side(poseStack, buffers, false, -tilt, height, page, false);
+        side(poseStack, buffers, true, tilt, height, forward ? page - 1 : page, true, true);
+        side(poseStack, buffers, false, -tilt, height, page, false, true);
         float right = -tilt;
         float left = tilt - Mth.PI;
         float turn = forward ? Mth.lerp(over, right, left) : Mth.lerp(over, left, right);
         float lifted = height + SHEET_LIFT;
         if (turn > -Mth.HALF_PI) {
-            side(poseStack, buffers, false, turn, lifted, page, false);
+            side(poseStack, buffers, false, turn, lifted, page, false, true);
         } else {
-            side(poseStack, buffers, true, turn + Mth.PI, lifted, forward ? page : page + 1, false);
+            side(poseStack, buffers, true, turn + Mth.PI, lifted, forward ? page : page + 1, false, true);
         }
     }
 
     /** One side of a sheet, turned about the fold: units run right and down as on a screen. {@code resting}: the tabs stand on it. */
     private void side(PoseStack poseStack, MultiBufferSource buffers, boolean left, float turn, float height, int listPage,
-            boolean resting) {
+            boolean resting, boolean cover) {
+        long started = System.nanoTime();
         poseStack.pushPose();
         poseStack.translate(0.0F, height, 0.0F);
         poseStack.mulPose(new Quaternionf().rotationZ(turn));
         Matrix4f sheet = new Matrix4f(-UNIT, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, -UNIT, 0.0F, 0.0F, UNIT, 0.0F, 0.0F, left ? PAGE_WIDTH : 0.0F, 0.0F, PAGE_HEIGHT / 2.0F, 1.0F);
         poseStack.last().pose().mul(sheet);
-        Sheet canvas = new Sheet(poseStack, buffers);
+        com.pockyl.diegesis.impl.client.render.SceneSubmit.layer(cover ? 1 : 0);
+        Sheet canvas = new Sheet(poseStack, buffers, cover, left);
         canvas.paper(left);
+        if (cover) {
+            // A sheet being turned is drawn twice: the paper is a soft, slightly see-through texture, and a single pass let the
+            // page behind it — its grid, its icons — show through the wells as squares cut in the page. Twice, it is solid.
+            canvas.paper(left);
+        }
         canvas.rect(left ? UNITS_WIDE - FOLD_WIDTH : 0.0F, 0.0F, FOLD_WIDTH, UNITS_HIGH, 0.1F, FOLD);
-        canvas.rect(left ? UNITS_WIDE - 2.0F : 0.0F, 0.0F, 2.0F, UNITS_HIGH, 0.15F, FOLD);
+        canvas.rect(left ? UNITS_WIDE - 1.0F : 0.0F, 0.0F, 1.0F, UNITS_HIGH, 0.15F, FOLD);
         if (left) {
             if (resting) {
                 drawTabs(canvas);
@@ -773,6 +866,11 @@ final class RecipeBook implements NodePainter {
             }
         }
         poseStack.popPose();
+        long spent = (System.nanoTime() - started) / 1_000_000L;
+        if (spent >= 8L) {
+            com.pockyl.handson_delight.HandsOnDelight.LOGGER.info("book: {} side of page {} drawn in {} ms", left ? "left" : "right",
+                    listPage, spent);
+        }
     }
 
     private void drawTabs(Sheet canvas) {
@@ -788,7 +886,7 @@ final class RecipeBook implements NodePainter {
             Entry entry = entries.get(i);
             int x = GRID_X + (i - first) % COLUMNS * PITCH;
             int y = GRID_Y + (i - first) / COLUMNS * PITCH;
-            canvas.rect(x, y, WELL_SIZE, WELL_SIZE, WELL_LIFT, entry.isReady() ? WELL_READY : WELL);
+            canvas.well(x, y, WELL_SIZE, WELL_SIZE, WELL_LIFT, entry.isReady() ? WELL_READY : WELL);
             canvas.item(entry.dish(), x + 0.5F, y + 0.5F, 16.0F, !entry.isReady());
             if (entry == picked || entry == hovered) {
                 canvas.frame(x, y, WELL_SIZE);
@@ -833,22 +931,31 @@ final class RecipeBook implements NodePainter {
         canvas.rect(middle - rowWide / 2.0F, line + 0.5F, rowWide, 0.6F, WELL_LIFT, RULE);
         int count = entry.ingredients().size();
         long second = Util.getMillis() / 1000L;
-        float top = line + 3.0F;
-        for (int i = 0; i < count; i++) {
-            int inRow = Math.min(3, count - i / 3 * 3);
-            float x = middle - (inRow * PITCH - (PITCH - WELL_SIZE)) / 2.0F + i % 3 * PITCH;
-            float y = top + i / 3 * PITCH;
-            ItemStack[] choices = choices(entry.ingredients().get(i));
-            if (choices.length > 0) {
-                canvas.rect(x, y, WELL_SIZE, WELL_SIZE, WELL_LIFT, entry.found()[i] ? WELL_READY : WELL);
-                canvas.item(choices[(int) (second % choices.length)], x + 0.5F, y + 0.5F, 16.0F, !entry.found()[i]);
-            }
-        }
-        // The small print goes where there is room left, in the middle, on the line of the list's arrows.
         float footMiddle = ARROW_Y + ARROW_HEIGHT / 2.0F;
         float bottom = footMiddle - FOOT_SIZE / 2.0F;
         int rows = (count + 2) / 3;
-        if (top + rows * PITCH - (PITCH - WELL_SIZE) <= bottom) {
+        float top = line + 3.0F;
+        // Nine things are three rows: the grid gives way, a little smaller, rather than run off the page.
+        float pitch = PITCH;
+        float well = WELL_SIZE;
+        float room = bottom - top;
+        if (rows > 0 && rows * PITCH - (PITCH - WELL_SIZE) > room) {
+            pitch = Math.max(12.0F, Math.min(PITCH, room / rows + 1.0F));
+            well = Math.max(11.0F, pitch - 1.0F);
+            top = Math.max(line + 1.0F, bottom - (rows * pitch - (pitch - well)));
+        }
+        for (int i = 0; i < count; i++) {
+            int inRow = Math.min(3, count - i / 3 * 3);
+            float x = middle - (inRow * pitch - (pitch - well)) / 2.0F + i % 3 * pitch;
+            float y = top + i / 3 * pitch;
+            ItemStack[] choices = choices(entry.ingredients().get(i));
+            if (choices.length > 0) {
+                canvas.well(x, y, well, well, WELL_LIFT, entry.found()[i] ? WELL_READY : WELL);
+                canvas.item(choices[(int) (second % choices.length)], x + 0.5F, y + 0.5F, well - 1.0F, !entry.found()[i]);
+            }
+        }
+        // The small print goes where there is room left, in the middle, on the line of the list's arrows.
+        if (top + rows * pitch - (pitch - well) <= bottom) {
             List<ItemStack> foot = entry.page().foot();
             FormattedCharSequence note = entry.page().note() == null ? null : entry.page().note().getVisualOrderText();
             // The note stands close after the last thing, as a time after its clock.
@@ -881,7 +988,7 @@ final class RecipeBook implements NodePainter {
             float x = left + star * (size + 1);
             int earning = star == open ? Math.round(PotLogic.nextStar(entry.made()) * size) : 0;
             for (int row = 0; row < size; row++) {
-                int color = star < open ? STAR_OPEN : row >= size - earning ? STAR_EARNING : STAR_SHUT;
+                int color = star < open ? STAR_OPEN : row >= size - earning ? STAR_EARNING_SOLID : STAR_SHUT_SOLID;
                 for (int column = 0; column < size; column++) {
                     if (PotBehavior.STAR[row].charAt(column) == '#') {
                         canvas.rect(x + column, line + 1 + row, 1, 1, WELL_LIFT, color);
@@ -896,7 +1003,15 @@ final class RecipeBook implements NodePainter {
      * An item's quads, straight into the buffers of the book: the game hands them over to a submit node collector, and here they are
      * written out at once, each with its own render type, as the game's own item feature renderer does it.
      */
-    private void drawItem(ItemStackRenderState state, PoseStack poseStack, MultiBufferSource buffers) {
+    private void drawItem(ItemStackRenderState state, PoseStack poseStack, MultiBufferSource buffers, int wash) {
+        drawItem(state, poseStack, buffers, wash, false);
+    }
+
+    /**
+     * {@code cullAway}: skip the quads of the far side of a block, so a faded icon does not show its own back faces through its
+     * front ones (a fence read as four-dimensional where its bars cross).
+     */
+    private void drawItem(ItemStackRenderState state, PoseStack poseStack, MultiBufferSource buffers, int wash, boolean cullAway) {
         ITEM_SUBMITS.clear();
         try {
             state.submit(poseStack, ITEM_SUBMITS, shade, OverlayTexture.NO_OVERLAY, 0);
@@ -904,16 +1019,32 @@ final class RecipeBook implements NodePainter {
                 ITEM_QUAD.setLightCoords(submit.lightCoords());
                 ITEM_QUAD.setOverlayCoords(submit.overlayCoords());
                 int[] tints = submit.tintLayers();
+                // A second pass over the same quads, same pose, colour of the paper: drawn after, at the same depth, it covers the
+                // icon exactly — no drift with the camera, and no see-through of the model's own back faces.
                 for (BakedQuad quad : submit.quads()) {
+                    if (cullAway) {
+                        Direction facing = quad.direction();
+                        // The icon looks at the block from its front-top-right, as the game draws items: the other three faces are
+                        // the far side of it.
+                        if (facing == Direction.NORTH || facing == Direction.WEST || facing == Direction.DOWN) {
+                            continue;
+                        }
+                    }
                     BakedQuad.MaterialInfo material = quad.materialInfo();
                     int tint = material.tintIndex();
-                    ITEM_QUAD.setColor(material.isTinted() && tint >= 0 && tint < tints.length ? tints[tint] : -1);
+                    int own = material.isTinted() && tint >= 0 && tint < tints.length ? tints[tint] : -1;
+                    ITEM_QUAD.setColor(own);
                     RenderType type = material.itemRenderType();
                     VertexConsumer consumer = buffers.getBuffer(type == null ? Sheets.cutoutBlockItemSheet() : type);
                     if (submit.foilType() != ItemStackRenderState.FoilType.NONE) {
                         consumer = VertexMultiConsumer.create(buffers.getBuffer(RenderTypes.glint()), consumer);
                     }
                     consumer.putBakedQuad(submit.pose(), quad, ITEM_QUAD);
+                    if (wash != 0) {
+                        ITEM_QUAD.setColor(wash);
+                        consumer.putBakedQuad(submit.pose(), quad, ITEM_QUAD);
+                        ITEM_QUAD.setColor(own);
+                    }
                 }
             }
         } finally {
@@ -927,10 +1058,24 @@ final class RecipeBook implements NodePainter {
         private final MultiBufferSource buffers;
         private final TextureAtlasSprite white;
 
-        Sheet(PoseStack poseStack, MultiBufferSource buffers) {
+        /** A sheet being turned: what lies behind it must not show through its wells. */
+        private final boolean cover;
+        /** The page's paper is drawn mirrored on the left: the patch under a well follows it. */
+        private final boolean mirrored;
+
+        Sheet(PoseStack poseStack, MultiBufferSource buffers, boolean cover, boolean mirrored) {
             this.poseStack = poseStack;
             this.buffers = buffers;
+            this.cover = cover;
+            this.mirrored = mirrored;
             white = Minecraft.getInstance().getAtlasManager().getAtlasOrThrow(net.minecraft.resources.Identifier.withDefaultNamespace("blocks")).getSprite(WHITE);
+        }
+
+        /**
+         * A well of the page. A sheet being turned is drawn solid underneath (see {@code side}), so nothing shows through it here.
+         */
+        void well(float x, float y, float width, float height, float lift, int argb) {
+            rect(x, y, width, height, lift, argb);
         }
 
         void paper(boolean mirrored) {
@@ -960,7 +1105,14 @@ final class RecipeBook implements NodePainter {
             rect(x + 1.0F, -high, TAB_WIDE - 2.0F, 1.0F, 0.1F, TAB_EDGE);
             rect(x, -high + 1.0F, 1.0F, high - 1.0F, 0.1F, TAB_EDGE);
             rect(x + TAB_WIDE - 1.0F, -high + 1.0F, 1.0F, high - 1.0F, 0.1F, TAB_EDGE);
-            item(icon, x + (TAB_WIDE - TAB_ICON) / 2.0F, -high + 2.0F, TAB_ICON, !chosen && !lit);
+            // The icon sits in the middle of the tab, a little smaller on the dropped ones: it used to hang over their lower edge.
+            float room = high + bottom;
+            float size = Math.min(TAB_ICON, room - 1.5F);
+            float ix = x + (TAB_WIDE - size) / 2.0F;
+            float iy = -high + (room - size) / 2.0F;
+            // No wash on a tab: the tab's own paper already says whether it stands up or lies down, and a patch over the icon
+            // read as a hole in the tab.
+            item(icon, ix, iy, size);
         }
 
         /** The ribbon from the paper texture, its forked end frayed; lighter under the cursor. */
@@ -1014,15 +1166,16 @@ final class RecipeBook implements NodePainter {
             ITEM_STATE.clear();
             Minecraft.getInstance().getItemModelResolver().updateForTopItem(ITEM_STATE, stack, ItemDisplayContext.GUI, station.level(),
                     null, 0);
+            boolean block3d = false;
             if (!ITEM_STATE.isEmpty()) {
                 // A block's model is the one lit as a block: since 26.1 a potato is a BlockItem too, and it lies flat on the page.
-                boolean block3d = ITEM_STATE.usesBlockLight();
+                block3d = ITEM_STATE.usesBlockLight();
                 poseStack.scale(size, -size, block3d ? BLOCK_DEPTH : ITEM_DEPTH);
                 MultiBufferSource lit = FlatLit.of(buffers);
-                // A flat icon fades as it did; a block's icon is left solid: through a see-through sheet its back faces show
-                // through its front ones and it reads as glass, not as "not in the inventory" (the well's colour says that).
-                boolean fade = faded && !block3d;
-                drawItem(ITEM_STATE, poseStack, fade ? DiegesisClient.tinted(lit, FADED) : lit);
+                // A flat icon fades as it did — a drink's glass is see-through in its texture, and drawn solid it would go.
+                // A block's icon is left solid, as in 1.21.1: made see-through it shows its own back faces through its front ones
+                // (a fence reads as dotted where its bars cross), and an overlay drawn over it drifts with the camera's perspective.
+                drawItem(ITEM_STATE, poseStack, faded ? DiegesisClient.tinted(lit, FADED) : lit, 0);
             }
             ITEM_STATE.clear();
             poseStack.popPose();

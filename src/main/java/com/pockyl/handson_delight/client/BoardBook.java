@@ -42,17 +42,60 @@ final class BoardBook implements RecipeBook.Source {
     private static final String KNIFE = "knife";
     /** Cuts made with anything but a knife: an axe, shears, an addon's rolling pin, all under one tab. */
     private static final String TOOLS = "tools";
-    private ListTag readFrom;
-    private List<RecipeBook.Page> dishes = List.of();
+    private static final Object LOCK = new Object();
+    /** The tag being read, and whether a reader is at work: reading in the background keeps the click from hitching. */
+    private static ListTag queued;
+    private static boolean reading;
+    private static volatile ListTag readFrom;
+    private static volatile List<RecipeBook.Page> dishes = List.of();
     /** What goes into the dishes without a page: Modest Meals' meals of free fillings. */
-    private List<Ingredient> unlisted = List.of();
+    private static volatile List<Ingredient> unlisted = List.of();
     /** Goes up each time the dishes are read anew: what the drawer shows depends on them. */
-    private int version;
+    private static volatile int version;
+    /** The pages handed out last time, and what they were built from: the same list is given again while nothing changed. */
+    private static List<RecipeBook.Page> built = List.of();
+    private static int builtVersion = -1;
+    private static Level builtLevel;
+    private static int builtCuts = -1;
+    /** The cuts' pages, read once for the level: opening a board then has nothing to build. */
+    private static final Map<Level, List<RecipeBook.Page>> CUTS = new java.util.WeakHashMap<>();
+    private static final Object CUTS_LOCK = new Object();
 
     @Override
     public List<RecipeBook.Page> pages(StationView view) {
         Level level = view.level();
-        List<RecipeBook.Page> pages = new ArrayList<>(dishes(view));
+        // The server sends the book again at every click, a new tag with the same content; reading 232 recipes each time is what
+        // made the board hitch as it opened. The pages are built once and handed back while neither the dishes nor the level changed.
+        List<RecipeBook.Page> dishesNow = dishes(view);
+        List<RecipeBook.Page> cutsNow = cuts(level);
+        if (builtVersion == version && builtLevel == level && builtCuts == cutsNow.size() && !built.isEmpty()) {
+            return built;
+        }
+        long started = System.nanoTime();
+        List<RecipeBook.Page> pages = new ArrayList<>(dishesNow.size() + cutsNow.size());
+        pages.addAll(dishesNow);
+        pages.addAll(cutsNow);
+        built = List.copyOf(pages);
+        builtVersion = version;
+        builtLevel = level;
+        builtCuts = cutsNow.size();
+        long spent = (System.nanoTime() - started) / 1_000_000L;
+        if (spent >= 10L) {
+            com.pockyl.handson_delight.HandsOnDelight.LOGGER.info("board book: {} pages built in {} ms", built.size(), spent);
+        }
+        return built;
+    }
+
+    /** The cuts the board's book lists, read once for the level (a recipe reload makes a new set of recipes, and a new list). */
+    static List<RecipeBook.Page> cuts(Level level) {
+        synchronized (CUTS_LOCK) {
+            List<RecipeBook.Page> done = CUTS.get(level);
+            // An empty list read before the client had the recipes stays as "nothing read": it is read again, not kept.
+            if (done != null && (!done.isEmpty() || Cutting.all(level).isEmpty())) {
+                return done;
+            }
+        }
+        List<RecipeBook.Page> pages = new ArrayList<>();
         for (CuttingBoardRecipe recipe : Cutting.all(level)) {
             List<ItemStack> results = results(recipe);
             if (results.isEmpty()) {
@@ -63,7 +106,20 @@ final class BoardBook implements RecipeBook.Source {
             pages.add(new RecipeBook.Page(Cutting.id(level, recipe), results.get(0).copy(), ingredients, foot, null, false,
                     toolKind(recipe)));
         }
-        return pages;
+        List<RecipeBook.Page> done = List.copyOf(pages);
+        synchronized (CUTS_LOCK) {
+            CUTS.put(level, done);
+        }
+        return done;
+    }
+
+    /** Reads the cuts ahead of the first open, on a worker thread when the world joins. */
+    static void warm(Level level) {
+        try {
+            cuts(level);
+        } catch (RuntimeException broken) {
+            com.pockyl.handson_delight.HandsOnDelight.LOGGER.warn("Could not read the board's cuts ahead of time", broken);
+        }
     }
 
     /**
@@ -142,10 +198,13 @@ final class BoardBook implements RecipeBook.Source {
         received = book;
     }
 
-    private List<RecipeBook.Page> dishes(StationView view) {
-        ListTag book = received;
-        if (book != readFrom) {
-            readFrom = book;
+    /**
+     * Reads the dishes the server sent — 232 recipes of the board and its addons — where the book is opened, once per set: the
+     * server sends the same set again at every click, and a set already read is not read again. Done here rather than in the
+     * background, so the list is right from the first frame and never re-sorts after the book is open.
+     */
+    private static void readDishes(ListTag book) {
+        try {
             List<RecipeBook.Page> read = new ArrayList<>();
             List<Ingredient> others = new ArrayList<>();
             for (AssemblyRecipes.Assembly dish : AssemblyRecipes.read(book)) {
@@ -159,15 +218,27 @@ final class BoardBook implements RecipeBook.Source {
                 ItemStack result = dish.stack();
                 read.add(new RecipeBook.Page(dish.id(), result, ingredients, List.of(), null, false, DISHES));
             }
-            dishes = read;
+            readFrom = book;
+            dishes = List.copyOf(read);
             unlisted = List.copyOf(others);
             version++;
+        } catch (RuntimeException broken) {
+            // One broken set of recipes must not lose the book: it keeps the pages it has.
+            com.pockyl.handson_delight.HandsOnDelight.LOGGER.warn("Could not read the board's dishes", broken);
+        }
+    }
+
+    private List<RecipeBook.Page> dishes(StationView view) {
+        ListTag book = received;
+        if (!book.isEmpty() && (readFrom == null || !book.equals(readFrom))) {
+            readDishes(book);
         }
         return dishes;
     }
 
     /** The dishes as last read, a new number each time they change. */
-    int version(StationView view) {
+    @Override
+    public int version(StationView view) {
         dishes(view);
         return version;
     }
